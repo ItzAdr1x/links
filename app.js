@@ -281,4 +281,22 @@
       if (reduce) draw(0);
     }
   }, 250));
+  // ---------- Debug-Overlay (nur wenn ?debug in der URL steht) ----------
+  if (/[?&]debug\b/.test(location.search)) {
+    const box = document.createElement("div");
+    box.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99;padding:6px 8px;font:11px/1.4 monospace;color:#0f0;background:rgba(0,0,0,.85);border-radius:6px;pointer-events:none;white-space:pre";
+    document.body.appendChild(box);
+    let n = 0, t0 = performance.now();
+    (function tick() { n++; requestAnimationFrame(tick); })();
+    setInterval(() => {
+      const now = performance.now();
+      const fps = Math.round(n * 1000 / (now - t0));
+      n = 0; t0 = now;
+      const s0 = stars[0];
+      box.textContent =
+        "app.js v3 | reduce:" + reduce + " | loop:" + (raf ? "on" : "off") +
+        "\nfps:" + fps + " | stars:" + stars.length + " | y0:" + (s0 ? Math.round(s0.y) : "-") +
+        "\ncanvas:" + canvas.width + "x" + canvas.height + " dpr:" + dpr + " coarse:" + coarse;
+    }, 500);
+  }
 })();
