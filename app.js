@@ -121,7 +121,8 @@
   const canvas = document.getElementById("stars");
   if (!cfg.enabled || !canvas) { if (canvas) canvas.remove(); return; }
 
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduce = cfg.respectReducedMotion === true &&
+   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const coarse = window.matchMedia("(pointer: coarse)").matches; // Handy / Tablet
   const ctx = canvas.getContext("2d");
   const color = cfg.color || "255,255,255";
