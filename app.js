@@ -40,8 +40,8 @@
     mail: { d: "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z M3 7l9 6 9-6" },
     link: { d: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1 M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" }
   };
-
   const NS = "http://www.w3.org/2000/svg";
+
   function iconEl(name) {
     const def = ICONS[name];
     if (!def) return null; // not a known name -> shown as text/emoji
@@ -62,6 +62,7 @@
     svg.appendChild(p);
     return svg;
   }
+
   function fillIcon(el, name) {
     const svg = iconEl(name || "link");
     if (svg) el.appendChild(svg);
@@ -78,8 +79,8 @@
 
   // ---------- Links ----------
   const safe = (u) => /^(https?:|mailto:|tel:)/i.test(u || "") ? u : "#";
-
   const linksEl = document.getElementById("links");
+
   (c.links || []).forEach((l) => {
     if (l.type === "heading") {
       const h = document.createElement("div");
@@ -121,19 +122,47 @@
   if (!cfg.enabled || !canvas) { if (canvas) canvas.remove(); return; }
 
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const coarse = window.matchMedia("(pointer: coarse)").matches; // Handy / Tablet
   const ctx = canvas.getContext("2d");
   const color = cfg.color || "255,255,255";
   const speedMul = cfg.speed || 1;
   const trailMul = cfg.trail == null ? 1 : cfg.trail;
-  let w, h, dpr, stars = [];
+  const maxDpr = coarse ? 1.5 : 2;
 
-  function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    w = window.innerWidth;
-    h = window.innerHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+  let w = 0, h = 0, dpr = 1, lastW = 0, lastH = 0;
+  let stars = [];
+  let raf = 0, last = 0;
+
+  // Glow einmal vorrendern statt pro Stern und Frame einen Radial-Gradient zu bauen
+  const HALO = 64;
+  const haloSprite = document.createElement("canvas");
+  haloSprite.width = haloSprite.height = HALO;
+  (function () {
+    const hc = haloSprite.getContext("2d");
+    const g = hc.createRadialGradient(HALO / 2, HALO / 2, 0, HALO / 2, HALO / 2, HALO / 2);
+    g.addColorStop(0, `rgba(${color},1)`);
+    g.addColorStop(1, `rgba(${color},0)`);
+    hc.fillStyle = g;
+    hc.fillRect(0, 0, HALO, HALO);
+  })();
+
+  // Canvas-Groesse kommt aus dem CSS (100lvh) und ist damit unabhaengig von der
+  // ein-/ausblendenden Adressleiste. Neu dimensioniert wird nur, wenn sich
+  // wirklich etwas Relevantes aendert (Breite, Drehen, Desktop-Fenster).
+  function resize(force) {
+    const nw = canvas.clientWidth || window.innerWidth;
+    const nh = canvas.clientHeight || window.innerHeight;
+    const widthChanged = nw !== lastW;
+    const heightChanged = coarse ? Math.abs(nh - lastH) > 120 : nh !== lastH;
+    if (!force && !widthChanged && !heightChanged) return false;
+
+    lastW = nw; lastH = nh;
+    dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+    w = nw; h = nh;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
   }
 
   function makeStar(initial) {
@@ -149,15 +178,19 @@
     };
   }
 
-  function init() {
-    resize();
-    stars = Array.from({ length: cfg.count || 90 }, () => makeStar(true));
+  function starCount() {
+    const base = cfg.count || 90;
+    // Auf kleinen Touch-Screens weniger Sterne: sieht gleich dicht aus, laeuft deutlich fluessiger
+    const n = (coarse || w < 600) ? Math.round(base * 0.55) : base;
+    return Math.max(20, n);
   }
 
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
+  function init() {
+    resize(true);
+    stars = Array.from({ length: starCount() }, () => makeStar(true));
+  }
+
+  function draw(dt) {
     ctx.clearRect(0, 0, w, h);
 
     for (const s of stars) {
@@ -186,14 +219,11 @@
         ctx.stroke();
       }
 
-      // Soft glow around the head
-      const halo = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * 5);
-      halo.addColorStop(0, `rgba(${color},${alpha * 0.35})`);
-      halo.addColorStop(1, `rgba(${color},0)`);
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r * 5, 0, Math.PI * 2);
-      ctx.fill();
+      // Soft glow around the head (vorgerendertes Sprite)
+      const hr = s.r * 5;
+      ctx.globalAlpha = alpha * 0.35;
+      ctx.drawImage(haloSprite, s.x - hr, s.y - hr, hr * 2, hr * 2);
+      ctx.globalAlpha = 1;
 
       // Star head
       ctx.fillStyle = `rgba(${color},${alpha})`;
@@ -201,12 +231,53 @@
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (!reduce) requestAnimationFrame(frame);
+  }
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    draw(dt);
+    raf = requestAnimationFrame(frame);
+  }
+
+  function start() {
+    if (raf || reduce) return;
+    last = performance.now();
+    raf = requestAnimationFrame(frame);
+  }
+
+  function stop() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
   }
 
   init();
-  window.addEventListener("resize", () => { resize(); stars.forEach((s) => { s.x = Math.min(s.x, w); }); });
 
-  if (reduce) { frame(performance.now()); return; }
-  requestAnimationFrame(frame);
+  if (reduce) {
+    draw(0); // einmal statisch zeichnen
+  } else {
+    start();
+    // Tab im Hintergrund / App gewechselt -> Animation pausieren (spart Akku, kein dt-Sprung danach)
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stop(); else start();
+    });
+  }
+
+  let resizeTimer = 0;
+  function onResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (resize()) {
+        stars.forEach((s) => { s.x = Math.min(s.x, w); });
+        if (reduce) draw(0);
+      }
+    }, 120);
+  }
+  window.addEventListener("resize", onResize);
+  window.addEventListener("orientationchange", () => setTimeout(() => {
+    if (resize(true)) {
+      stars = Array.from({ length: starCount() }, () => makeStar(true));
+      if (reduce) draw(0);
+    }
+  }, 250));
 })();
